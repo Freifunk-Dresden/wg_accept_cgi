@@ -68,7 +68,7 @@ fn register_wg(node: &str, key: &str) -> Option<(WireguardInfo, bool)> {
 
 fn print_output_and_exit(response: &Response) {
     println!("Content-type: application/json");
-    println!("");
+    println!();
     println!("{}", serde_json::to_string(&response).unwrap_or("{}".to_string()));
 
     std::process::exit(0x0);
