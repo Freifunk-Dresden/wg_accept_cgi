@@ -69,7 +69,10 @@ fn register_wg(wg_backbone_path: &str, node: &str, key: &str) -> Option<(Wiregua
 fn print_output_and_exit(response: &Response) {
     println!("Content-type: application/json");
     println!();
-    println!("{}", serde_json::to_string(&response).unwrap_or("{}".to_string()));
+    println!(
+        "{}",
+        serde_json::to_string(&response).unwrap_or_else(|_| "{}".to_string())
+    );
 
     std::process::exit(0x0);
 }
