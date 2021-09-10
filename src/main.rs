@@ -33,7 +33,7 @@ fn uci_get(key: &str) -> Option<String> {
     let output = Command::new("uci").arg("get").arg("-q").arg(key).output();
     if let Ok(output) = output {
         if output.status.success() {
-            Some(String::from_utf8(output.stdout).unwrap_or_default())
+            Some(String::from_utf8(output.stdout).unwrap_or_default().replace("\n", ""))
         } else {
             None
         }
@@ -42,14 +42,14 @@ fn uci_get(key: &str) -> Option<String> {
     }
 }
 
-fn register_wg(node: &str, key: &str) -> Option<(WireguardInfo, bool)> {
+fn register_wg(wg_backbone_path: &str, node: &str, key: &str) -> Option<(WireguardInfo, bool)> {
     let key_check = Regex::new("[0-9a-zA-Z+=/]{44}").unwrap();
     let node = node.parse::<u16>();
 
     if let Ok(node) = node {
         if key_check.is_match(key) {
             let output = Command::new("sudo")
-                                .arg("/usr/local/bin/wg-backbone.sh")
+                                .arg(wg_backbone_path)
                                 .arg("accept")
                                 .arg(node.to_string())
                                 .arg(key)
@@ -75,10 +75,19 @@ fn print_output_and_exit(response: &Response) {
 }
 
 fn main() {
+    let uci_public = uci_get("wg_cgi.uci.wg_public_key").unwrap_or_default();
+    let uci_node = uci_get("wg_cgi.uci.node_id").unwrap_or_default();
+    let uci_restrict = uci_get("wg_cgi.uci.wg_restrict").unwrap_or_default();
+    let sh_wg_backbone = uci_get("wg_cgi.sh.wg_backbone_path").unwrap_or_default();
 
-    let server_key = uci_get("ffdd.wireguard.public").unwrap_or_default().replace("\n", "");
-    let server_node = uci_get("ffdd.sys.ddmesh_node").unwrap_or_default().replace("\n", "");
-    let server_restricted = uci_get("ffdd.sys.wireguard_restrict").unwrap_or_default().replace("\n", "");
+    if uci_public.is_empty() || uci_node.is_empty() || uci_restrict.is_empty() || sh_wg_backbone.is_empty() {
+        let response = Response{ status: Status::NotConfigured, server: None, client: None };
+        print_output_and_exit(&response);
+    }
+
+    let server_key = uci_get(uci_public.as_str()).unwrap_or_default();
+    let server_node = uci_get(uci_node.as_str()).unwrap_or_default();
+    let server_restricted = uci_get(uci_restrict.as_str()).unwrap_or_default();
     let server_restricted = server_restricted.trim();
 
     if server_key.is_empty() || server_node.is_empty() || server_restricted.is_empty() {
@@ -100,7 +109,7 @@ fn main() {
         let client_key = qs.get("key").unwrap_or_default();
         let client_node = qs.get("node").unwrap_or_default();
         
-        let response = match register_wg(client_node, client_key) {
+        let response = match register_wg(sh_wg_backbone.as_str(), client_node, client_key) {
             Some((client, false)) => {
                 Response{ status: Status::RequestAccepted, server, client: Some(client) }
             },
