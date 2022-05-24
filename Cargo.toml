@@ -1,8 +1,8 @@
 [package]
 name = "ffdd_wg_accept_cgi"
-version = "1.0.0"
+version = "1.1.0"
 authors = ["nmerkelt"]
-edition = "2018"
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
