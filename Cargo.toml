@@ -1,6 +1,6 @@
 [package]
 name = "ffdd_wg_accept_cgi"
-version = "1.1.0"
+version = "1.2.0"
 authors = ["nmerkelt"]
 edition = "2021"
 
