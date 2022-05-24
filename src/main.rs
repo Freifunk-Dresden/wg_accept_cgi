@@ -17,6 +17,8 @@ struct Response {
 struct WireguardInfo {
     node: u16,
     key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    port: Option<u16>,
 }
 
 #[derive(Serialize)]
@@ -64,6 +66,7 @@ fn register_wg(wg_backbone_path: &str, node: &str, key: &str) -> Option<(Wiregua
                         WireguardInfo {
                             node,
                             key: key.to_string(),
+                            port: None,
                         },
                         false,
                     ));
@@ -72,6 +75,7 @@ fn register_wg(wg_backbone_path: &str, node: &str, key: &str) -> Option<(Wiregua
                         WireguardInfo {
                             node,
                             key: key.to_string(),
+                            port: None,
                         },
                         true,
                     ));
@@ -97,11 +101,13 @@ fn main() {
     let uci_public = uci_get("wg_cgi.uci.wg_public_key").unwrap_or_default();
     let uci_node = uci_get("wg_cgi.uci.node_id").unwrap_or_default();
     let uci_restrict = uci_get("wg_cgi.uci.wg_restrict").unwrap_or_default();
+    let uci_port = uci_get("wg_cgi.uci.wg_ext_port").unwrap_or_default();
     let sh_wg_backbone = uci_get("wg_cgi.sh.wg_backbone_path").unwrap_or_default();
 
     if uci_public.is_empty()
         || uci_node.is_empty()
         || uci_restrict.is_empty()
+        || uci_port.is_empty()
         || sh_wg_backbone.is_empty()
     {
         let response = Response {
@@ -116,6 +122,7 @@ fn main() {
     let server_node = uci_get(uci_node.as_str()).unwrap_or_default();
     let server_restricted = uci_get(uci_restrict.as_str()).unwrap_or_default();
     let server_restricted = server_restricted.trim();
+    let server_port = uci_get(uci_port.as_str()).unwrap_or("5003".to_string());
 
     if server_key.is_empty() || server_node.is_empty() || server_restricted.is_empty() {
         let response = Response {
@@ -129,6 +136,7 @@ fn main() {
     let server = Some(WireguardInfo {
         node: server_node.parse::<u16>().unwrap(),
         key: server_key,
+        port: Some(server_port.parse::<u16>().unwrap()),
     });
 
     let request_method = env::var("REQUEST_METHOD").unwrap_or_default();
