@@ -143,7 +143,7 @@ fn main() {
     let query_string = env::var("QUERY_STRING").unwrap_or_default();
 
     if server_restricted != "1" && request_method == "GET" && !query_string.is_empty() {
-        let qs = QString::from(&format!("?{}", query_string)[..]);
+        let qs = QString::from(query_string.as_str());
         let client_key = qs.get("key").unwrap_or_default();
         let client_node = qs.get("node").unwrap_or_default();
 
