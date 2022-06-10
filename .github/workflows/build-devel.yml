@@ -1,4 +1,4 @@
-name: Rust
+name: Development Job
 
 on:
   push:
