@@ -1,6 +1,6 @@
 use qstring::QString;
 use regex::Regex;
-use serde_derive::Serialize;
+use serde::Serialize;
 use std::env;
 use std::process::Command;
 
