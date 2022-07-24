@@ -38,7 +38,7 @@ fn uci_get(key: &str) -> Option<String> {
             Some(
                 String::from_utf8(output.stdout)
                     .unwrap_or_default()
-                    .replace("\n", ""),
+                    .replace('\n', ""),
             )
         } else {
             None
@@ -122,7 +122,7 @@ fn main() {
     let server_node = uci_get(uci_node.as_str()).unwrap_or_default();
     let server_restricted = uci_get(uci_restrict.as_str()).unwrap_or_default();
     let server_restricted = server_restricted.trim();
-    let server_port = uci_get(uci_port.as_str()).unwrap_or("5003".to_string());
+    let server_port = uci_get(uci_port.as_str()).unwrap_or_else(|| "5003".to_string());
 
     if server_key.is_empty() || server_node.is_empty() || server_restricted.is_empty() {
         let response = Response {
