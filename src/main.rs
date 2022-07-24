@@ -8,13 +8,13 @@ use std::process::Command;
 struct Response {
     status: Status,
     #[serde(skip_serializing_if = "Option::is_none")]
-    server: Option<WireguardInfo>,
+    server: Option<WireGuardInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    client: Option<WireguardInfo>,
+    client: Option<WireGuardInfo>,
 }
 
 #[derive(Serialize)]
-struct WireguardInfo {
+struct WireGuardInfo {
     node: u16,
     key: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -48,7 +48,7 @@ fn uci_get(key: &str) -> Option<String> {
     }
 }
 
-fn register_wg(wg_backbone_path: &str, node: &str, key: &str) -> Option<(WireguardInfo, bool)> {
+fn register_wg(wg_backbone_path: &str, node: &str, key: &str) -> Option<(WireGuardInfo, bool)> {
     let key_check = Regex::new("[0-9a-zA-Z+=/]{44}").unwrap();
     let node = node.parse::<u16>();
 
@@ -63,7 +63,7 @@ fn register_wg(wg_backbone_path: &str, node: &str, key: &str) -> Option<(Wiregua
             if let Ok(output) = output {
                 if output.status.success() {
                     return Some((
-                        WireguardInfo {
+                        WireGuardInfo {
                             node,
                             key: key.to_string(),
                             port: None,
@@ -72,7 +72,7 @@ fn register_wg(wg_backbone_path: &str, node: &str, key: &str) -> Option<(Wiregua
                     ));
                 } else if output.status.code() == Some(2) {
                     return Some((
-                        WireguardInfo {
+                        WireGuardInfo {
                             node,
                             key: key.to_string(),
                             port: None,
@@ -133,7 +133,7 @@ fn main() {
         print_output_and_exit(&response);
     }
 
-    let server = Some(WireguardInfo {
+    let server = Some(WireGuardInfo {
         node: server_node.parse::<u16>().unwrap(),
         key: server_key,
         port: Some(server_port.parse::<u16>().unwrap()),
