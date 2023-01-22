@@ -1,8 +1,10 @@
+use std::env;
+use std::process::Command;
+
+use anyhow::{anyhow, Result};
 use qstring::QString;
 use regex::Regex;
 use serde::Serialize;
-use std::env;
-use std::process::Command;
 
 #[derive(Serialize)]
 struct Response {
@@ -11,6 +13,8 @@ struct Response {
     server: Option<WireGuardInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     client: Option<WireGuardInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -31,155 +35,130 @@ enum Status {
     RequestFailed,
 }
 
-fn uci_get(key: &str) -> Option<String> {
-    let output = Command::new("uci").arg("get").arg("-q").arg(key).output();
-    if let Ok(output) = output {
-        if output.status.success() {
-            Some(
-                String::from_utf8(output.stdout)
-                    .unwrap_or_default()
-                    .replace('\n', ""),
-            )
-        } else {
-            None
-        }
-    } else {
-        None
+fn uci_get(key: &str) -> Result<String> {
+    let output = Command::new("uci").arg("get").arg("-q").arg(key).output()?;
+    Ok(String::from_utf8(output.stdout)
+        .unwrap_or_default()
+        .replace('\n', ""))
+}
+
+fn get_server_status() -> Result<(WireGuardInfo, bool, String)> {
+    let uci_public = &uci_get("wg_cgi.uci.wg_public_key")?;
+    let uci_node = &uci_get("wg_cgi.uci.node_id")?;
+    let uci_restrict = &uci_get("wg_cgi.uci.wg_restrict")?;
+    let uci_port = &uci_get("wg_cgi.uci.wg_ext_port")?;
+    let wg_backbone_path = uci_get("wg_cgi.sh.wg_backbone_path").unwrap_or_default();
+
+    let key = uci_get(uci_public)?;
+    let node = uci_get(uci_node)?.parse::<u16>()?;
+    let server_restricted = uci_get(uci_restrict)?.trim() == "1";
+    let server_port = uci_get(uci_port).unwrap_or_else(|_| "5003".to_string())
+        .parse::<u16>().unwrap_or(5003);
+
+    Ok((WireGuardInfo {
+        node,
+        key,
+        port: Some(server_port),
+    }, server_restricted, wg_backbone_path))
+}
+
+fn register_wg(wg_backbone_path: &str, node: &str, key: &str) -> Result<(WireGuardInfo, bool)> {
+    let key_check = Regex::new("[0-9a-zA-Z+=/]{44}")?;
+    let node = node.parse::<u16>()?;
+
+    if !key_check.is_match(key) {
+        return Err(anyhow!("`{:?}` is not a valid WireGuard key", key));
+    }
+    let output = Command::new("sudo")
+        .arg(wg_backbone_path)
+        .arg("accept")
+        .arg(node.to_string())
+        .arg(key)
+        .output()?;
+    match output.status.code() {
+        Some(0) => Ok((
+            WireGuardInfo {
+                node,
+                key: key.to_string(),
+                port: None,
+            },
+            false,
+        )),
+        Some(2) => Ok((
+            WireGuardInfo {
+                node,
+                key: key.to_string(),
+                port: None,
+            },
+            true,
+        )),
+        Some(c) => Err(anyhow!("`wg_backbone accept` failed with non-zero exit code `{:?}`", c)),
+        None => Err(anyhow!("`wg_backbone accept` failed with no exit code")),
     }
 }
 
-fn register_wg(wg_backbone_path: &str, node: &str, key: &str) -> Option<(WireGuardInfo, bool)> {
-    let key_check = Regex::new("[0-9a-zA-Z+=/]{44}").unwrap();
-    let node = node.parse::<u16>();
+fn process_request(server_info: WireGuardInfo, wg_backbone_path: &str) -> Response {
+    let request_method = env::var("REQUEST_METHOD").unwrap_or_default();
+    let query_string = env::var("QUERY_STRING").unwrap_or_default();
 
-    if let Ok(node) = node {
-        if key_check.is_match(key) {
-            let output = Command::new("sudo")
-                .arg(wg_backbone_path)
-                .arg("accept")
-                .arg(node.to_string())
-                .arg(key)
-                .output();
-            if let Ok(output) = output {
-                if output.status.success() {
-                    return Some((
-                        WireGuardInfo {
-                            node,
-                            key: key.to_string(),
-                            port: None,
-                        },
-                        false,
-                    ));
-                } else if output.status.code() == Some(2) {
-                    return Some((
-                        WireGuardInfo {
-                            node,
-                            key: key.to_string(),
-                            port: None,
-                        },
-                        true,
-                    ));
-                }
-            }
-        }
+    if request_method != "GET" || query_string.is_empty() {
+         return Response {
+             status: Status::NotRestricted,
+             server: Some(server_info),
+             client: None,
+             error: None,
+        };
     }
-    None
+
+    let qs = QString::from(&*query_string);
+    let client_key = qs.get("key").unwrap_or_default();
+    let client_node = qs.get("node").unwrap_or_default();
+
+    match register_wg(wg_backbone_path, client_node, client_key) {
+        Ok((client, false)) => Response {
+            status: Status::RequestAccepted,
+            server: Some(server_info),
+            client: Some(client),
+            error: None,
+        },
+        Ok((_, true)) => Response {
+            status: Status::RequestAlreadyRegistered,
+            server: Some(server_info),
+            client: None,
+            error: None,
+        },
+        Err(e) => Response {
+            status: Status::RequestFailed,
+            server: Some(server_info),
+            client: None,
+            error: Some(e.to_string()),
+        },
+    }
 }
 
-fn print_output_and_exit(response: &Response) {
+fn main() {
+    let response = match get_server_status() {
+        Ok((server_info, true, _)) => Response {
+            status: Status::Restricted,
+            server: Some(server_info),
+            client: None,
+            error: None,
+        },
+        Ok((server_info, false, wg_backbone_path)) => {
+            process_request(server_info, &wg_backbone_path)
+        }
+        Err(e) => Response {
+            status: Status::NotConfigured,
+            server: None,
+            client: None,
+            error: Some(e.to_string()),
+        }
+    };
+
     println!("Content-type: application/json");
     println!();
     println!(
         "{}",
         serde_json::to_string(&response).unwrap_or_else(|_| "{}".to_string())
     );
-
-    std::process::exit(0x0);
-}
-
-fn main() {
-    let uci_public = uci_get("wg_cgi.uci.wg_public_key").unwrap_or_default();
-    let uci_node = uci_get("wg_cgi.uci.node_id").unwrap_or_default();
-    let uci_restrict = uci_get("wg_cgi.uci.wg_restrict").unwrap_or_default();
-    let uci_port = uci_get("wg_cgi.uci.wg_ext_port").unwrap_or_default();
-    let sh_wg_backbone = uci_get("wg_cgi.sh.wg_backbone_path").unwrap_or_default();
-
-    if uci_public.is_empty()
-        || uci_node.is_empty()
-        || uci_restrict.is_empty()
-        || uci_port.is_empty()
-        || sh_wg_backbone.is_empty()
-    {
-        let response = Response {
-            status: Status::NotConfigured,
-            server: None,
-            client: None,
-        };
-        print_output_and_exit(&response);
-    }
-
-    let server_key = uci_get(uci_public.as_str()).unwrap_or_default();
-    let server_node = uci_get(uci_node.as_str()).unwrap_or_default();
-    let server_restricted = uci_get(uci_restrict.as_str()).unwrap_or_default();
-    let server_restricted = server_restricted.trim();
-    let server_port = uci_get(uci_port.as_str()).unwrap_or_else(|| "5003".to_string());
-
-    if server_key.is_empty() || server_node.is_empty() || server_restricted.is_empty() {
-        let response = Response {
-            status: Status::NotConfigured,
-            server: None,
-            client: None,
-        };
-        print_output_and_exit(&response);
-    }
-
-    let server = Some(WireGuardInfo {
-        node: server_node.parse::<u16>().unwrap(),
-        key: server_key,
-        port: Some(server_port.parse::<u16>().unwrap()),
-    });
-
-    let request_method = env::var("REQUEST_METHOD").unwrap_or_default();
-    let query_string = env::var("QUERY_STRING").unwrap_or_default();
-
-    if server_restricted != "1" && request_method == "GET" && !query_string.is_empty() {
-        let qs = QString::from(query_string.as_str());
-        let client_key = qs.get("key").unwrap_or_default();
-        let client_node = qs.get("node").unwrap_or_default();
-
-        let response = match register_wg(sh_wg_backbone.as_str(), client_node, client_key) {
-            Some((client, false)) => Response {
-                status: Status::RequestAccepted,
-                server,
-                client: Some(client),
-            },
-            Some((_, true)) => Response {
-                status: Status::RequestAlreadyRegistered,
-                server,
-                client: None,
-            },
-            None => Response {
-                status: Status::RequestFailed,
-                server,
-                client: None,
-            },
-        };
-        print_output_and_exit(&response);
-        return;
-    }
-
-    let response = if server_restricted == "1" {
-        Response {
-            status: Status::Restricted,
-            server,
-            client: None,
-        }
-    } else {
-        Response {
-            status: Status::NotRestricted,
-            server,
-            client: None,
-        }
-    };
-    print_output_and_exit(&response);
 }
