@@ -1,7 +1,7 @@
 use std::env;
 use std::process::Command;
 
-use anyhow::{anyhow, Result};
+use anyhow::{bail, ensure, Result};
 use qstring::QString;
 use regex::Regex;
 use serde::Serialize;
@@ -52,23 +52,32 @@ fn get_server_status() -> Result<(WireGuardInfo, bool, String)> {
     let key = uci_get(uci_public)?;
     let node = uci_get(uci_node)?.parse::<u16>()?;
     let server_restricted = uci_get(uci_restrict)?.trim() == "1";
-    let server_port = uci_get(uci_port).unwrap_or_else(|_| "5003".to_string())
-        .parse::<u16>().unwrap_or(5003);
+    let server_port = uci_get(uci_port)
+        .unwrap_or_else(|_| "5003".to_string())
+        .parse::<u16>()
+        .unwrap_or(5003);
 
-    Ok((WireGuardInfo {
-        node,
-        key,
-        port: Some(server_port),
-    }, server_restricted, wg_backbone_path))
+    Ok((
+        WireGuardInfo {
+            node,
+            key,
+            port: Some(server_port),
+        },
+        server_restricted,
+        wg_backbone_path,
+    ))
 }
 
 fn register_wg(wg_backbone_path: &str, node: &str, key: &str) -> Result<(WireGuardInfo, bool)> {
     let key_check = Regex::new("[0-9a-zA-Z+=/]{44}")?;
     let node = node.parse::<u16>()?;
 
-    if !key_check.is_match(key) {
-        return Err(anyhow!("`{:?}` is not a valid WireGuard key", key));
-    }
+    ensure!(
+        key_check.is_match(key),
+        "`{:?}` is not a valid WireGuard key",
+        key
+    );
+
     let output = Command::new("sudo")
         .arg(wg_backbone_path)
         .arg("accept")
@@ -92,8 +101,11 @@ fn register_wg(wg_backbone_path: &str, node: &str, key: &str) -> Result<(WireGua
             },
             true,
         )),
-        Some(c) => Err(anyhow!("`wg_backbone accept` failed with non-zero exit code `{:?}`", c)),
-        None => Err(anyhow!("`wg_backbone accept` failed with no exit code")),
+        Some(c) => bail!(
+            "`wg_backbone accept` failed with non-zero exit code `{:?}`",
+            c
+        ),
+        None => bail!("`wg_backbone accept` terminated by signal"),
     }
 }
 
@@ -102,11 +114,11 @@ fn process_request(server_info: WireGuardInfo, wg_backbone_path: &str) -> Respon
     let query_string = env::var("QUERY_STRING").unwrap_or_default();
 
     if request_method != "GET" || query_string.is_empty() {
-         return Response {
-             status: Status::NotRestricted,
-             server: Some(server_info),
-             client: None,
-             error: None,
+        return Response {
+            status: Status::NotRestricted,
+            server: Some(server_info),
+            client: None,
+            error: None,
         };
     }
 
@@ -152,7 +164,7 @@ fn main() {
             server: None,
             client: None,
             error: Some(e.to_string()),
-        }
+        },
     };
 
     println!("Content-type: application/json");
