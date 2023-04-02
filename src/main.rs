@@ -2,9 +2,14 @@ use std::env;
 use std::process::Command;
 
 use anyhow::{bail, ensure, Result};
-use qstring::QString;
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+#[derive(Deserialize, Serialize, Debug)]
+struct Query {
+    node: u16,
+    key: String,
+}
 
 #[derive(Serialize)]
 struct Response {
@@ -68,9 +73,11 @@ fn get_server_status() -> Result<(WireGuardInfo, bool, String)> {
     ))
 }
 
-fn register_wg(wg_backbone_path: &str, node: &str, key: &str) -> Result<(WireGuardInfo, bool)> {
+fn register_wg(wg_backbone_path: &str, query_string: &str) -> Result<(WireGuardInfo, bool)> {
     let key_check = Regex::new("[0-9a-zA-Z+=/]{44}")?;
-    let node = node.parse::<u16>()?;
+
+    let request: Query = serde_qs::from_str(query_string)?;
+    let key = request.key.as_str();
 
     ensure!(
         key_check.is_match(key),
@@ -81,13 +88,13 @@ fn register_wg(wg_backbone_path: &str, node: &str, key: &str) -> Result<(WireGua
     let output = Command::new("sudo")
         .arg(wg_backbone_path)
         .arg("accept")
-        .arg(node.to_string())
+        .arg(request.node.to_string())
         .arg(key)
         .output()?;
     match output.status.code() {
         Some(0) => Ok((
             WireGuardInfo {
-                node,
+                node: request.node,
                 key: key.to_string(),
                 port: None,
             },
@@ -95,7 +102,7 @@ fn register_wg(wg_backbone_path: &str, node: &str, key: &str) -> Result<(WireGua
         )),
         Some(2) => Ok((
             WireGuardInfo {
-                node,
+                node: request.node,
                 key: key.to_string(),
                 port: None,
             },
@@ -122,11 +129,7 @@ fn process_request(server_info: WireGuardInfo, wg_backbone_path: &str) -> Respon
         };
     }
 
-    let qs = QString::from(&*query_string);
-    let client_key = qs.get("key").unwrap_or_default();
-    let client_node = qs.get("node").unwrap_or_default();
-
-    match register_wg(wg_backbone_path, client_node, client_key) {
+    match register_wg(wg_backbone_path, &query_string) {
         Ok((client, false)) => Response {
             status: Status::RequestAccepted,
             server: Some(server_info),
